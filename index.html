@@ -3,15 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Three.js Stress Test with Physics</title>
+    <title>Bouncing Cubes Remaster by Br4nd0n/Sushi</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { margin: 0; overflow: hidden; background-color: #111; color: white; }
         canvas { display: block; width: 100vw; height: 100vh; }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        /* prevent text selection */
+        .no-select { user-select: none; -webkit-user-select: none; }
     </style>
-    <!-- Import Map for Three.js and Cannon-es -->
+    <!-- import map for 3.js and cannon-es -->
     <script type="importmap">
         {
             "imports": {
@@ -24,12 +26,12 @@
 </head>
 <body>
 
-    <!-- UI Overlay -->
-    <div class="absolute top-4 left-4 z-10 w-80 bg-black/80 backdrop-blur-md p-6 rounded-xl border border-white/10 shadow-2xl text-sm font-sans select-none">
+    <!-- ui overlay -->
+    <div class="absolute top-4 left-4 z-10 w-80 bg-black/80 backdrop-blur-md p-6 rounded-xl border border-white/10 shadow-2xl text-sm font-sans no-select">
         <h1 class="text-xl font-bold mb-1 text-blue-400">Physics Stress Test</h1>
-        <p class="text-gray-400 mb-4 text-xs">Spawn objects to test physics engine.</p>
+        <p class="text-gray-400 mb-4 text-xs">Spawn objects with physics & materials.</p>
 
-        <!-- Stats -->
+        <!-- stats -->
         <div class="flex justify-between items-center mb-6 bg-white/5 p-3 rounded-lg border border-white/5">
             <div>
                 <div class="text-xs text-gray-500 uppercase tracking-wider">Object Count</div>
@@ -41,9 +43,20 @@
             </div>
         </div>
 
-        <!-- Controls -->
+        <!-- controls -->
         <div class="space-y-4">
-            <!-- Color Picker -->
+            
+            <!-- material selector -->
+            <div>
+                <label class="text-gray-300 block mb-1">Material Type</label>
+                <select id="material-select" class="w-full bg-gray-800 border border-gray-600 text-white rounded px-3 py-2 focus:outline-none focus:border-blue-500">
+                    <option value="plastic">Plastic (Default)</option>
+                    <option value="neon">Neon (Emissive)</option>
+                    <option value="glass">Glass (GPU Heavy)</option>
+                </select>
+            </div>
+
+            <!-- color picker -->
             <div class="flex items-center justify-between">
                 <label class="text-gray-300">Cube Color</label>
                 <div class="flex items-center gap-2">
@@ -52,7 +65,7 @@
                 </div>
             </div>
 
-            <!-- Size Slider -->
+            <!-- size slider -->
             <div>
                 <div class="flex justify-between mb-1">
                     <label class="text-gray-300">Cube Size</label>
@@ -62,9 +75,19 @@
                     class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
             </div>
 
+            <!-- bloom strength slider -->
+            <div>
+                <div class="flex justify-between mb-1">
+                    <label class="text-gray-300">Bloom Strength</label>
+                    <span id="bloom-strength-value" class="text-pink-300 font-mono">1.2</span>
+                </div>
+                <input type="range" id="bloom-strength-slider" min="0.0" max="5.0" step="0.1" value="1.2" 
+                    class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-pink-500">
+            </div>
+
             <hr class="border-white/10 my-4">
 
-            <!-- Actions -->
+            <!-- acctions -->
             <div class="grid grid-cols-2 gap-3">
                 <button id="btn-spawn" class="bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg transition active:scale-95 shadow-lg shadow-blue-900/20">
                     + Spawn 10
@@ -85,38 +108,44 @@
         </div>
     </div>
 
-    <!-- Main Script -->
+    <!-- miain script -->
     <script type="module">
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import * as CANNON from 'cannon-es';
+        // post-processing imports for bloom effect
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-        // --- Configuration ---
+        // --- configuration ---
         const SPREAD_RADIUS = 20;
         const SPAWN_HEIGHT = 20;
         
-        // --- State ---
+        // --- state ---
         // objects array will hold { mesh: THREE.Mesh, body: CANNON.Body }
         let objects = [];
         let currentColor = '#00ff88';
         let currentSize = 1.0;
+        let currentMaterial = 'plastic';
         let lastTime = performance.now();
         let frameCount = 0;
 
-        // --- Physics Setup ---
+        // --- physics setup ---
         const world = new CANNON.World({
             gravity: new CANNON.Vec3(0, -9.82, 0), // m/s²
         });
         
-        // Physics Material (bounciness/friction)
+        // physics material (bounciness/friction)
         const defaultMaterial = new CANNON.Material('default');
         const defaultContactMaterial = new CANNON.ContactMaterial(defaultMaterial, defaultMaterial, {
             friction: 0.3,
-            restitution: 0.5, // Bounciness
+            restitution: 0.5, // bounciness
         });
         world.addContactMaterial(defaultContactMaterial);
 
-        // Ground Plane (Physics)
+        // ground Plane (physics)
         const groundBody = new CANNON.Body({
             type: CANNON.Body.STATIC,
             shape: new CANNON.Plane(),
@@ -125,7 +154,7 @@
         groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0); // Rotate to be flat
         world.addBody(groundBody);
 
-        // --- Scene Setup ---
+        // --- scene setup ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x111111);
         scene.fog = new THREE.Fog(0x111111, 20, 150);
@@ -136,10 +165,35 @@
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.shadowMap.enabled = true; // Enable shadows for better depth
+        renderer.shadowMap.enabled = true;
+        
+        // tone mapping for better neon/lighting handling
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        
         document.body.appendChild(renderer.domElement);
+        
+        // --- post-processing (bloom aka flashbang) setup ---
+        let composer = new EffectComposer(renderer);
+        
+        const renderPass = new RenderPass(scene, camera);
+        
+        // initial bloom strength is 1.2, matching the slider's default value
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            1.2,    // strength
+            0.4,    // radius
+            0.85    // threshold
+        );
+        
+        const outputPass = new OutputPass();
 
-        // --- Visual Ground ---
+        composer.addPass(renderPass);
+        composer.addPass(bloomPass);
+        composer.addPass(outputPass);
+
+
+        // --- visual ground ---
         const groundGeometry = new THREE.PlaneGeometry(200, 200);
         const groundMaterial = new THREE.MeshStandardMaterial({ 
             color: 0x222222, 
@@ -151,16 +205,17 @@
         groundMesh.receiveShadow = true;
         scene.add(groundMesh);
 
-        // --- Controls ---
+        // --- controls ---
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
 
-        // --- Lighting ---
-        const ambientLight = new THREE.AmbientLight(0x404040, 2);
+        // --- lighting TUFF RTX LIGHTING!!!! ---
+        // ambient light needs to be subtle when using bloom
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.5); 
         scene.add(ambientLight);
 
-        const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
         dirLight.position.set(20, 50, 20);
         dirLight.castShadow = true;
         dirLight.shadow.mapSize.width = 2048;
@@ -173,42 +228,71 @@
         dirLight.shadow.camera.bottom = -50;
         scene.add(dirLight);
         
-        const dirLight2 = new THREE.DirectionalLight(0x5555ff, 1);
-        dirLight2.position.set(-20, 20, -20);
-        scene.add(dirLight2);
+        const blueLight = new THREE.PointLight(0x0044ff, 1, 100);
+        blueLight.position.set(-20, 10, -20);
+        scene.add(blueLight);
+        
+        const pinkLight = new THREE.PointLight(0xff0044, 1, 100);
+        pinkLight.position.set(20, 10, -20);
+        scene.add(pinkLight);
 
-        // --- Logic ---
+        // --- logic [i have none irl]---
+
+        function getMaterialInstance(color) {
+            switch(currentMaterial) {
+                case 'neon':
+                    // neon material: low color, high emissive intensity to trigger bloom
+                    return new THREE.MeshStandardMaterial({
+                        color: 0x000000, // black color to minimize non-emissive light reflection
+                        emissive: color,
+                        emissiveIntensity: 5.0, // increased intensity for better bloom
+                        roughness: 0.1,
+                        metalness: 0.1
+                    });
+                case 'glass':
+                    return new THREE.MeshPhysicalMaterial({
+                        color: color,
+                        metalness: 0.1,
+                        roughness: 0.05,
+                        transmission: 0.95, // glass-like transparency
+                        thickness: 1.0, // refraction volume
+                        transparent: true,
+                        opacity: 1.0,
+                        ior: 1.5
+                    });
+                case 'plastic':
+                default:
+                    return new THREE.MeshStandardMaterial({ 
+                        color: color,
+                        roughness: 0.3,
+                        metalness: 0.1
+                    });
+            }
+        }
 
         function createCubes(count) {
-            // Three.js Geometry/Material
-            const geometry = new THREE.BoxGeometry(currentSize, currentSize, currentSize);
-            const material = new THREE.MeshStandardMaterial({ 
-                color: currentColor,
-                roughness: 0.3,
-                metalness: 0.1
-            });
-
-            // Cannon.js Shape
-            // Cannon boxes are defined by half-extents (center to edge)
+            // cannon.js shape
             const halfExtents = new CANNON.Vec3(currentSize / 2, currentSize / 2, currentSize / 2);
             const shape = new CANNON.Box(halfExtents);
+            
+            // re-use geometry and material for better batch performance
+            const geometry = new THREE.BoxGeometry(currentSize, currentSize, currentSize);
+            const material = getMaterialInstance(currentColor);
 
             for (let i = 0; i < count; i++) {
-                // 1. Create Physics Body
+                // 1. create Physics Body
                 const body = new CANNON.Body({
-                    mass: 1 * (currentSize * currentSize), // More mass for bigger objects
+                    mass: 1 * (currentSize * currentSize),
                     shape: shape,
                     material: defaultMaterial
                 });
 
-                // Random start position high up
+                // random start position
                 const x = (Math.random() - 0.5) * SPREAD_RADIUS;
                 const z = (Math.random() - 0.5) * SPREAD_RADIUS;
-                const y = SPAWN_HEIGHT + (Math.random() * 20); // Stagger height
+                const y = SPAWN_HEIGHT + (Math.random() * 20);
 
                 body.position.set(x, y, z);
-                
-                // Random initial rotation
                 body.quaternion.setFromEuler(
                     Math.random() * Math.PI,
                     Math.random() * Math.PI,
@@ -217,13 +301,13 @@
 
                 world.addBody(body);
 
-                // 2. Create Visual Mesh
+                // 2. create visual mesh
                 const mesh = new THREE.Mesh(geometry, material);
                 mesh.castShadow = true;
                 mesh.receiveShadow = true;
                 scene.add(mesh);
 
-                // 3. Link them
+                // 3. link them
                 objects.push({ mesh, body });
             }
             updateUI();
@@ -231,12 +315,12 @@
 
         function clearCubes() {
             objects.forEach(obj => {
-                // Remove visual
+                // remove visual
                 scene.remove(obj.mesh);
                 if (obj.mesh.geometry) obj.mesh.geometry.dispose();
                 if (obj.mesh.material) obj.mesh.material.dispose();
 
-                // Remove physics
+                // remove physics
                 world.removeBody(obj.body);
             });
             objects = [];
@@ -247,29 +331,29 @@
             document.getElementById('object-count').innerText = objects.length.toLocaleString();
         }
 
-        // Fixed time step for physics
+        // fixed time step for physics
         const timeStep = 1 / 60;
 
         function animate() {
             requestAnimationFrame(animate);
 
-            // 1. Step Physics World
+            // 1. step physics world
             world.step(timeStep);
 
-            // 2. Sync Visuals to Physics
+            // 2. sync visuals to physics
             for (let i = 0; i < objects.length; i++) {
                 const obj = objects[i];
                 obj.mesh.position.copy(obj.body.position);
                 obj.mesh.quaternion.copy(obj.body.quaternion);
                 
-                // Clean up objects that fall too far (glitch prevention)
+                // fallback floor
                 if (obj.body.position.y < -50) {
                     obj.body.position.set(0, 20, 0);
                     obj.body.velocity.set(0, 0, 0);
                 }
             }
 
-            // 3. FPS Calc
+            // 3. fps calc [what is this diddy blud doing on the calculator is blud einstein]
             const time = performance.now();
             frameCount++;
             if (time >= lastTime + 1000) {
@@ -279,15 +363,17 @@
             }
 
             controls.update();
-            renderer.render(scene, camera);
+            // use composer.render() instead of renderer.render() to apply post-processing effects (like bloom)
+            composer.render();
         }
 
-        // --- Event Listeners ---
+        // --- event listeners ---
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight); // resize the composer too
         });
 
         document.getElementById('btn-spawn').addEventListener('click', () => {
@@ -314,6 +400,20 @@
         sizeSlider.addEventListener('input', (e) => {
             currentSize = parseFloat(e.target.value);
             sizeValue.innerText = currentSize.toFixed(1);
+        });
+
+        const materialSelect = document.getElementById('material-select');
+        materialSelect.addEventListener('change', (e) => {
+            currentMaterial = e.target.value;
+        });
+        
+        // bloom slider
+        const bloomStrengthSlider = document.getElementById('bloom-strength-slider');
+        const bloomStrengthValue = document.getElementById('bloom-strength-value');
+        bloomStrengthSlider.addEventListener('input', (e) => {
+            const strength = parseFloat(e.target.value);
+            bloomPass.strength = strength;
+            bloomStrengthValue.innerText = strength.toFixed(1);
         });
 
         animate();
